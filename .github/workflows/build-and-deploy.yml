@@ -1,0 +1,51 @@
+name: Build and Deploy
+
+on:
+  push:
+    paths:
+      - .github/workflows/build-and-deploy.yml
+      - content/**
+      - static/**
+      - assets/**
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Pandoc
+        run: sudo apt-get install -y pandoc
+
+      - name: Copy static files
+        run: |
+          mkdir -p output/assets
+          cp -r assets output/
+          cp static/* output/
+
+      - name: Convert Markdown to HTML
+        run: |
+          for file in $(find content -name '*.md'); do
+            pandoc "$file" -o "output/$(basename "${file%.md}.html")" --standalone --css=/assets/css/theme.css
+          done
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Copy HTML to S3
+        run: aws s3 sync output/ s3://${{ secrets.AWS_S3_BUCKET }}
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION }} \
+            --paths "/*"
